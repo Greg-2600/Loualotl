@@ -54,6 +54,8 @@ let dangers = [];
 let proteins = [];
 let particles = [];
 let bubbles = [];
+const npcs = [];
+for (let i=0;i<4;i++) npcs.push({ x: Math.random()*W, y: Math.random()*(H-120)+60, vx:(Math.random()-0.5)*80, vy:(Math.random()-0.5)*40, angle:0, gillPhase:Math.random()*10, limbs:{leftArm:true,rightArm:true,tail:true}, regenUntil:0, invuln:0, eaten:0, oxygen:100 });
 let score = 0;
 let factShown = false;
 let facts = [
@@ -218,11 +220,20 @@ function update(dt) {
   particles.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.vy+=0.05;p.life-=dt*0.8;});
   particles = particles.filter(p=>p.life>0);
 
+  // npc swim
+  npcs.forEach(n => {
+    n.x += n.vx*dt; n.y += n.vy*dt; n.gillPhase += dt*6;
+    if (n.x<40||n.x>W-40) n.vx*=-1;
+    if (n.y<40||n.y>H-40) n.vy*=-1;
+    n.angle = Math.atan2(n.vy,n.vx);
+    if (Math.random()<0.01){ n.vx += (Math.random()-0.5)*20; n.vy += (Math.random()-0.5)*20; }
+  });
   if (factTimer>0) factTimer -= dt;
 }
 
-function drawAxolotl() {
-  const {x,y,angle,limbs,gillPhase} = ax;
+function drawAxolotl(a) {
+  if (!a) a = ax;
+  const {x,y,angle,limbs,gillPhase} = a;
   ctx.save();
   ctx.translate(x,y);
   ctx.rotate(angle);
@@ -239,9 +250,9 @@ function drawAxolotl() {
     ctx.quadraticCurveTo(-55, -12, -70, 0);
     ctx.quadraticCurveTo(-55, 12, -28, 0);
     ctx.fill();
-  } else if (ax.regenUntil>0) {
+  } else if (a.regenUntil>0) {
     // stub growing
-    const t = 1 - ax.regenUntil/5;
+    const t = 1 - a.regenUntil/5;
     ctx.fillStyle = '#FFC0CB';
     ctx.beginPath();
     ctx.ellipse(-30,0, 6+4*t, 4, 0,0,Math.PI*2);
@@ -260,8 +271,8 @@ function drawAxolotl() {
       ctx.fill();
     }
   };
-  if (limbs.leftArm) drawLeg(-1); else if (ax.regenUntil>0){ ctx.fillStyle='#FF69B4'; ctx.beginPath(); ctx.arc(8,-16,4,0,Math.PI*2); ctx.fill(); }
-  if (limbs.rightArm) drawLeg(1); else if (ax.regenUntil>0){ ctx.fillStyle='#FF69B4'; ctx.beginPath(); ctx.arc(8,16,4,0,Math.PI*2); ctx.fill(); }
+  if (limbs.leftArm) drawLeg(-1); else if (a.regenUntil>0){ ctx.fillStyle='#FF69B4'; ctx.beginPath(); ctx.arc(8,-16,4,0,Math.PI*2); ctx.fill(); }
+  if (limbs.rightArm) drawLeg(1); else if (a.regenUntil>0){ ctx.fillStyle='#FF69B4'; ctx.beginPath(); ctx.arc(8,16,4,0,Math.PI*2); ctx.fill(); }
   // head
   ctx.fillStyle = '#FFB6C1';
   ctx.beginPath();
@@ -333,6 +344,13 @@ function draw() {
   ctx.fillStyle = 'rgba(20,80,60,0.15)';
   ctx.fillRect(0,0,W,H);
 
+  // lake name
+  ctx.fillStyle='rgba(255,255,255,0.9)';
+  ctx.font='bold 28px "Comic Sans MS", Verdana';
+  ctx.textAlign='center';
+  ctx.fillText('Lake Xochililco', W/2, 34);
+  ctx.textAlign='left';
+
   // plants
   plants.forEach(p => {
     ctx.strokeStyle = '#2E7D32'; ctx.lineWidth=4;
@@ -366,15 +384,20 @@ function draw() {
       ctx.fillStyle='#424242';
       ctx.beginPath(); ctx.moveTo(d.x,d.y-d.r*1.2); ctx.lineTo(d.x-4,d.y-d.r*0.5); ctx.lineTo(d.x+4,d.y-d.r*0.5); ctx.fill();
     } else {
-      // big fish
+      // big fish (flip when moving left)
+      const flip = d.vx < 0 ? -1 : 1;
+      ctx.save();
+      ctx.translate(d.x,d.y);
+      ctx.scale(flip,1);
       ctx.fillStyle='#37474F';
-      ctx.beginPath(); ctx.ellipse(d.x,d.y,d.r,d.r*0.5,0,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(0,0,d.r,d.r*0.5,0,0,Math.PI*2); ctx.fill();
       ctx.beginPath();
-      ctx.moveTo(d.x-d.r,d.y); ctx.lineTo(d.x-d.r-18,d.y-12); ctx.lineTo(d.x-d.r-18,d.y+12); ctx.closePath(); ctx.fill();
+      ctx.moveTo(-d.r,0); ctx.lineTo(-d.r-18,-12); ctx.lineTo(-d.r-18,12); ctx.closePath(); ctx.fill();
       ctx.fillStyle='#fff';
-      ctx.beginPath(); ctx.arc(d.x+d.r*0.6,d.y-4,6,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(d.r*0.6,-4,6,0,Math.PI*2); ctx.fill();
       ctx.fillStyle='#000';
-      ctx.beginPath(); ctx.arc(d.x+d.r*0.7,d.y-4,3,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(d.r*0.7,-4,3,0,Math.PI*2); ctx.fill();
+      ctx.restore();
     }
   });
 
@@ -392,6 +415,8 @@ function draw() {
     ctx.beginPath(); ctx.arc(p.x,p.y,3,0,Math.PI*2); ctx.fill();
   });
 
+  // other axolotls
+  npcs.forEach(n => drawAxolotl(n));
   // axolotl
   drawAxolotl();
 
