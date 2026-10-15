@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Axolotl Lake Adventure</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0a2e4a; font-family: "Comic Sans MS", "Trebuchet MS", Verdana, sans-serif; }
+  body { display: flex; align-items: center; justify-content: center; }
+  #game { display: block; touch-action: none; cursor: none; }
+  #ui { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); color: #fff; font-size: 22px; text-shadow: 2px 2px 4px #000; pointer-events: none; }
+  .hint { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); color: #fff; font-size: 20px; text-shadow: 2px 2px 4px #000; text-align: center; pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div class="hint" id="hint">Move with mouse / touch / arrow keys &nbsp;•&nbsp; Eat food &nbsp;•&nbsp; Avoid sharp rocks & big fish</div>
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0;
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener('resize', resize); resize();
+
+// --- State ---
+const keys = {};
+window.addEventListener('keydown', e => {
+  if (e.key.startsWith('Arrow')) { e.preventDefault(); keys[e.key] = true; }
+  else keys[e.key] = true;
+}, { capture: true });
+window.addEventListener('keyup', e => { keys[e.key] = false; if (e.key.startsWith('Arrow')) e.preventDefault(); }, { capture: true });
+// keep window focusable
+canvas.setAttribute('tabindex','0');
+canvas.focus();
+window.focus();
+
+let pointer = { x: W/2, y: H/2, active: false };
+canvas.addEventListener('mousemove', e => { pointer.x = e.clientX; pointer.y = e.clientY; pointer.active = true; });
+canvas.addEventListener('touchstart', e => { const t=e.touches[0]; pointer.x=t.clientX; pointer.y=t.clientY; pointer.active=true; }, {passive:true});
+canvas.addEventListener('touchmove', e => { const t=e.touches[0]; pointer.x=t.clientX; pointer.y=t.clientY; pointer.active=true; e.preventDefault(); }, {passive:false});
+
+// --- Game data ---
+const ax = { x: W/2, y: H/2, tx: W/2, ty: H/2, vx:0, vy:0, angle:0, gillPhase:0, eaten:0, oxygen:100,
+  limbs: { leftArm:true, rightArm:true, tail:true }, regenUntil:0, regenTarget:null, invuln:0 };
+let foods = [];
+let dangers = [];
+let proteins = [];
+let particles = [];
+let bubbles = [];
+let score = 0;
+let factShown = false;
+let facts = [
+  "Axolotls are amphibians that stay underwater their whole lives!",
+  "Axolotls can grow back a lost leg in just a few weeks!",
+  "Their feathery gills help them breathe underwater.",
+  "Axolotls only live in Lake Xochimilco, Mexico!",
+  "Baby axolotls are called larvae and look like tiny tadpoles.",
+];
+let currentFact = facts[0];
+let factTimer = 0;
+let time = 0;
+
+// planting
+const plants = [];
+for (let i=0;i<12;i++) plants.push({ x: Math.random()*W, h: 60+Math.random()*120, phase: Math.random()*Math.PI*2 });
+
+function spawnFood() {
+  const types = ['worm','shrimp','insect'];
+  const t = types[Math.floor(Math.random()*types.length)];
+  foods.push({ x: Math.random()* (W-40)+20, y: Math.random()*(H-80)+40, type:t, r: 10, vx:(Math.random()-0.5)*0.5, vy:(Math.random()-0.5)*0.5 });
+}
+for (let i=0;i<6;i++) spawnFood();
+
+function spawnDanger() {
+  const bigFish = Math.random()<0.5;
+  dangers.push({
+    x: Math.random()<0.5 ? -60 : W+60,
+    y: Math.random()*(H-120)+60,
+    vx: (Math.random()<0.5?1:-1)*(1+Math.random()*1.2),
+    type: bigFish?'fish':'rock',
+    r: bigFish?45:30
+  });
+}
+setInterval(spawnDanger, 4000);
+
+function addParticles(x,y,color,n=8) {
+  for (let i=0;i<n;i++){
+    const a = Math.random()*Math.PI*2;
+    const s = 1+Math.random()*3;
+    particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1,color,r:2+Math.random()*3});
+  }
+}
+
+function update(dt) {
+  time += dt;
+  // target from input
+  let tx = ax.x, ty = ax.y;
+  const arrowPressed = keys.ArrowLeft||keys.ArrowRight||keys.ArrowUp||keys.ArrowDown;
+  if (arrowPressed) {
+    if (keys.ArrowLeft) tx -= 200*dt;
+    if (keys.ArrowRight) tx += 200*dt;
+    if (keys.ArrowUp) ty -= 200*dt;
+    if (keys.ArrowDown) ty += 200*dt;
+  } else if (pointer.active) { tx = pointer.x; ty = pointer.y; }
+  // clamp
+  tx = Math.max(40, Math.min(W-40, tx));
+  ty = Math.max(40, Math.min(H-40, ty));
+  ax.tx = tx; ax.ty = ty;
+  // move toward target
+  const dx = tx-ax.x, dy=ty-ax.y;
+  const dist = Math.hypot(dx,dy);
+  const speed = 180;
+  if (dist>2) {
+    const step = Math.min(dist, speed*dt);
+    ax.x += (dx/dist)*step; ax.y += (dy/dist)*step;
+    ax.angle = Math.atan2(dy,dx);
+  }
+  ax.gillPhase += dt*6;
+
+  // oxygen
+  if (ax.y < 40) { // surface gulp
+    ax.oxygen = Math.min(100, ax.oxygen + 40*dt);
+  } else {
+    ax.oxygen = Math.max(0, ax.oxygen - 6*dt);
+  }
+  if (ax.oxygen < 20) ax.oxygen = 20; // never critical enough to hurt
+
+  // invuln decay
+  if (ax.invuln>0) ax.invuln -= dt;
+
+  // regen
+  if (ax.regenUntil > 0) {
+    ax.regenUntil -= dt;
+    if (ax.regenUntil <= 0) {
+      // restore all limbs
+      ax.limbs = {leftArm:true,rightArm:true,tail:true};
+      addParticles(ax.x, ax.y, '#7CFC00', 20);
+    }
+  }
+
+  // proteins spawn during regen
+  if (ax.regenUntil > 0 && proteins.length < 5) {
+    if (Math.random() < 0.05) {
+      proteins.push({ x: ax.x + (Math.random()-0.5)*200, y: ax.y + (Math.random()-0.5)*200, r:12, life:6 });
+    }
+  } else if (ax.regenUntil <= 0) {
+    // remove lingering proteins
+    proteins = [];
+  }
+
+  // food
+  foods.forEach(f => { f.x += f.vx; f.y += f.vy; if (f.x<20||f.x>W-20) f.vx*=-1; if (f.y<40||f.y>H-40) f.vy*=-1; });
+  // eat check
+  foods = foods.filter(f => {
+    const d = Math.hypot(f.x-ax.x, f.y-ax.y);
+    if (d < 28) {
+      score++;
+      ax.eaten++;
+      addParticles(f.x, f.y, '#FFD700', 12);
+      if (ax.eaten % 10 === 0) {
+        currentFact = facts[Math.floor(Math.random()*facts.length)];
+        factTimer = 5;
+      }
+      if (foods.length < 6) spawnFood();
+      return false;
+    }
+    return true;
+  });
+
+  // proteins collect
+  proteins = proteins.filter(p => {
+    const d = Math.hypot(p.x-ax.x, p.y-ax.y);
+    if (d < 24) {
+      ax.regenUntil = Math.max(0, ax.regenUntil - 1.5);
+      addParticles(p.x, p.y, '#00FFAA', 10);
+      return false;
+    }
+    p.life -= dt;
+    return p.life > 0;
+  });
+
+  // dangers
+  dangers.forEach(d => { d.x += d.vx; });
+  dangers = dangers.filter(d => d.x > -80 && d.x < W+80);
+
+  // collision with danger
+  if (ax.invuln <= 0 && ax.regenUntil <= 0) {
+    for (const d of dangers) {
+      const dist = Math.hypot(d.x-ax.x, d.y-ax.y);
+      if (dist < d.r + 18) {
+        // lose a limb
+        if (ax.limbs.leftArm) ax.limbs.leftArm = false;
+        else if (ax.limbs.rightArm) ax.limbs.rightArm = false;
+        else if (ax.limbs.tail) ax.limbs.tail = false;
+        else { ax.limbs = {leftArm:false,rightArm:false,tail:false}; }
+        ax.regenUntil = 5;
+        ax.invuln = 1.5;
+        addParticles(ax.x, ax.y, '#FF69B4', 24);
+        d.x = -9999; // remove
+        break;
+      }
+    }
+  }
+
+  // bubbles
+  if (Math.random() < 0.05) bubbles.push({x:Math.random()*W, y:H+10, s:2+Math.random()*4, vy:-(0.5+Math.random()*1.5)});
+  bubbles.forEach(b=>{b.y+=b.vy; b.x+=Math.sin(time+b.y*0.01)*0.3;});
+  bubbles = bubbles.filter(b=>b.y>-20);
+
+  // particles
+  particles.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.vy+=0.05;p.life-=dt*0.8;});
+  particles = particles.filter(p=>p.life>0);
+
+  if (factTimer>0) factTimer -= dt;
+}
+
+function drawAxolotl() {
+  const {x,y,angle,limbs,gillPhase} = ax;
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.rotate(angle);
+  // body
+  ctx.fillStyle = '#FFB6C1';
+  ctx.beginPath();
+  ctx.ellipse(0,0,34,20,0,0,Math.PI*2);
+  ctx.fill();
+  // tail
+  if (limbs.tail) {
+    ctx.fillStyle = '#FFC0CB';
+    ctx.beginPath();
+    ctx.moveTo(-28,0);
+    ctx.quadraticCurveTo(-55, -12, -70, 0);
+    ctx.quadraticCurveTo(-55, 12, -28, 0);
+    ctx.fill();
+  } else if (ax.regenUntil>0) {
+    // stub growing
+    const t = 1 - ax.regenUntil/5;
+    ctx.fillStyle = '#FFC0CB';
+    ctx.beginPath();
+    ctx.ellipse(-30,0, 6+4*t, 4, 0,0,Math.PI*2);
+    ctx.fill();
+  }
+  // legs
+  const drawLeg = (side) => {
+    ctx.fillStyle = '#FF69B4';
+    ctx.beginPath();
+    ctx.ellipse(8, side*16, 10, 6, 0,0,Math.PI*2);
+    ctx.fill();
+    // toes
+    for (let i=0;i<3;i++){
+      ctx.beginPath();
+      ctx.arc(16, side*(12+i*3), 2.5,0,Math.PI*2);
+      ctx.fill();
+    }
+  };
+  if (limbs.leftArm) drawLeg(-1); else if (ax.regenUntil>0){ ctx.fillStyle='#FF69B4'; ctx.beginPath(); ctx.arc(8,-16,4,0,Math.PI*2); ctx.fill(); }
+  if (limbs.rightArm) drawLeg(1); else if (ax.regenUntil>0){ ctx.fillStyle='#FF69B4'; ctx.beginPath(); ctx.arc(8,16,4,0,Math.PI*2); ctx.fill(); }
+  // head
+  ctx.fillStyle = '#FFB6C1';
+  ctx.beginPath();
+  ctx.ellipse(24,0,18,16,0,0,Math.PI*2);
+  ctx.fill();
+  // eyes
+  ctx.fillStyle = '#000';
+  ctx.beginPath(); ctx.arc(30,-6,4,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(30,6,4,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(31,-7,1.5,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(31,5,1.5,0,Math.PI*2); ctx.fill();
+  // smile
+  ctx.strokeStyle = '#c2185b'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.arc(34,0,6,0.2,Math.PI-0.2); ctx.stroke();
+  // gills (feathery external)
+  for (let side=-1; side<=1; side+=2) {
+    for (let i=0;i<3;i++){
+      const wave = Math.sin(gillPhase + i + (side>0?0:1)) * 4;
+      ctx.strokeStyle = '#E91E63';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(20, side*(8+i*3));
+      ctx.quadraticCurveTo(32+wave, side*(12+i*3+wave), 38, side*(16+i*4));
+      ctx.stroke();
+      // tips
+      ctx.fillStyle = '#F06292';
+      ctx.beginPath();
+      ctx.arc(38, side*(16+i*4), 3,0,Math.PI*2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+function drawFood(f) {
+  if (f.type==='worm') {
+    ctx.strokeStyle = '#B71C1C'; ctx.lineWidth=3;
+    ctx.beginPath();
+    // wiggly
+    for (let i=0;i<8;i++){
+      const a = (time*3 + i*0.6);
+      const y = f.y + Math.sin(a)*3;
+      if (i===0) ctx.moveTo(f.x + i*3, y); else ctx.lineTo(f.x + i*3, y);
+    }
+    ctx.stroke();
+  } else if (f.type==='shrimp') {
+    ctx.fillStyle = '#FFAB91';
+    ctx.beginPath(); ctx.ellipse(f.x,f.y,9,5,Math.PI/4,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#E64A19'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(f.x-7,f.y); ctx.lineTo(f.x-12,f.y-3); ctx.stroke();
+  } else {
+    // insect
+    ctx.fillStyle='#4CAF50';
+    ctx.beginPath(); ctx.ellipse(f.x,f.y,6,5,0,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#2E7D32'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(f.x-8,f.y); ctx.lineTo(f.x+8,f.y); ctx.stroke();
+  }
+}
+
+function draw() {
+  // water background
+  const grad = ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#1565C0'); grad.addColorStop(1,'#0D3B66');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0,0,W,H);
+
+  // murky overlay
+  ctx.fillStyle = 'rgba(20,80,60,0.15)';
+  ctx.fillRect(0,0,W,H);
+
+  // plants
+  plants.forEach(p => {
+    ctx.strokeStyle = '#2E7D32'; ctx.lineWidth=4;
+    ctx.beginPath();
+    ctx.moveTo(p.x, H);
+    for (let i=0;i<10;i++){
+      const yy = H - i* (p.h/10);
+      const xx = p.x + Math.sin(time*0.8 + p.phase + i*0.5)*8;
+      if (i===0) ctx.moveTo(p.x,H); else ctx.lineTo(xx,yy);
+    }
+    ctx.stroke();
+    // leaf
+    ctx.fillStyle='#43A047';
+    ctx.beginPath();
+    ctx.ellipse(p.x + Math.sin(time*0.8+p.phase)*8, H-p.h, 12,6, Math.PI/4,0,Math.PI*2);
+    ctx.fill();
+  });
+
+  // bubbles
+  ctx.fillStyle='rgba(255,255,255,0.5)';
+  bubbles.forEach(b=>{ctx.beginPath(); ctx.arc(b.x,b.y,b.s,0,Math.PI*2); ctx.fill();});
+
+  // dangers
+  dangers.forEach(d => {
+    if (d.type==='rock') {
+      ctx.fillStyle='#757575';
+      ctx.beginPath(); ctx.moveTo(d.x-d.r,d.y+d.r*0.5);
+      ctx.lineTo(d.x-d.r*0.5,d.y-d.r); ctx.lineTo(d.x+d.r*0.5,d.y-d.r*0.8);
+      ctx.lineTo(d.x+d.r,d.y+d.r*0.5); ctx.lineTo(d.x,d.y+d.r); ctx.closePath(); ctx.fill();
+      // sharp spikes
+      ctx.fillStyle='#424242';
+      ctx.beginPath(); ctx.moveTo(d.x,d.y-d.r*1.2); ctx.lineTo(d.x-4,d.y-d.r*0.5); ctx.lineTo(d.x+4,d.y-d.r*0.5); ctx.fill();
+    } else {
+      // big fish
+      ctx.fillStyle='#37474F';
+      ctx.beginPath(); ctx.ellipse(d.x,d.y,d.r,d.r*0.5,0,0,Math.PI*2); ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(d.x-d.r,d.y); ctx.lineTo(d.x-d.r-18,d.y-12); ctx.lineTo(d.x-d.r-18,d.y+12); ctx.closePath(); ctx.fill();
+      ctx.fillStyle='#fff';
+      ctx.beginPath(); ctx.arc(d.x+d.r*0.6,d.y-4,6,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#000';
+      ctx.beginPath(); ctx.arc(d.x+d.r*0.7,d.y-4,3,0,Math.PI*2); ctx.fill();
+    }
+  });
+
+  // foods
+  foods.forEach(drawFood);
+
+  // proteins
+  proteins.forEach(p => {
+    const glow = 0.6+Math.sin(time*6)*0.4;
+    ctx.fillStyle = `rgba(0,255,170,${glow})`;
+    ctx.shadowColor='#00FFAA'; ctx.shadowBlur=12;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill();
+    ctx.shadowBlur=0;
+    ctx.fillStyle='#fff';
+    ctx.beginPath(); ctx.arc(p.x,p.y,3,0,Math.PI*2); ctx.fill();
+  });
+
+  // axolotl
+  drawAxolotl();
+
+  // particles
+  particles.forEach(p => {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1;
+  });
+
+  // HUD
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fillRect(10,10,200,60);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 24px "Comic Sans MS", Verdana';
+  ctx.fillText('Food: ' + score, 20, 40);
+  // oxygen bar
+  ctx.fillStyle = '#444'; ctx.fillRect(20,52,180,10);
+  const oc = ax.oxygen>50?'#4CAF50':ax.oxygen>25?'#FFC107':'#F44336';
+  ctx.fillStyle = oc; ctx.fillRect(20,52, (ax.oxygen/100)*180, 10);
+  ctx.fillStyle='#fff'; ctx.font='12px Verdana'; ctx.fillText('Oxygen',20,48);
+
+  // regen prompt
+  if (ax.regenUntil > 0) {
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(0, 0, W, 40);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 22px "Comic Sans MS", Verdana';
+    ctx.textAlign = 'center';
+    ctx.fillText('Ouch! Collect green sparkles to heal faster!', W/2, 26);
+    ctx.textAlign = 'left';
+    // timer
+    ctx.fillStyle = '#FFEB3B';
+    ctx.font = 'bold 20px Verdana';
+    ctx.fillText('Healing: ' + Math.ceil(ax.regenUntil) + 's', W/2-60, H-20);
+  }
+
+  // fact overlay
+  if (factTimer > 0) {
+    const alpha = Math.min(1, factTimer);
+    ctx.fillStyle = `rgba(0,0,0,${0.6* (factTimer>0.5?1:factTimer*2)})`;
+    ctx.fillRect(0, H/2-60, W, 120);
+    ctx.fillStyle = '#FFEB3B';
+    ctx.font = 'bold 26px "Comic Sans MS", Verdana';
+    ctx.textAlign='center';
+    ctx.fillText(currentFact, W/2, H/2);
+    ctx.textAlign='left';
+  }
+
+  // bottom hint
+  ctx.fillStyle='rgba(0,0,0,0.3)';
+  ctx.fillRect(0,H-28,W,28);
+  ctx.fillStyle='#fff'; ctx.font='14px Verdana';
+  ctx.textAlign='center';
+  ctx.fillText('Move to eat worms, shrimp & insects. Swim to the top for oxygen. You cannot die - you regenerate!', W/2, H-10);
+  ctx.textAlign='left';
+}
+
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.05, (now-last)/1000);
+  last = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
