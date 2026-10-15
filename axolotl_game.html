@@ -344,6 +344,18 @@ function draw() {
   ctx.fillStyle = 'rgba(20,80,60,0.15)';
   ctx.fillRect(0,0,W,H);
 
+  // air zone at top
+  const airGrad = ctx.createLinearGradient(0,0,0,60);
+  airGrad.addColorStop(0,'rgba(173,216,230,0.9)');
+  airGrad.addColorStop(1,'rgba(173,216,230,0)');
+  ctx.fillStyle = airGrad;
+  ctx.fillRect(0,0,W,60);
+  ctx.fillStyle='rgba(255,255,255,0.8)';
+  ctx.font='bold 18px "Comic Sans MS", Verdana';
+  ctx.textAlign='center';
+  ctx.fillText('AIR - swim here to breathe', W/2, 24);
+  ctx.textAlign='left';
+
   // lake name
   ctx.fillStyle='rgba(255,255,255,0.9)';
   ctx.font='bold 28px "Comic Sans MS", Verdana';
