@@ -113,8 +113,8 @@ function update(dt) {
     if (keys.ArrowDown) ty += 200*dt;
   } else if (pointer.active) { tx = pointer.x; ty = pointer.y; }
   // clamp
-  tx = Math.max(40, Math.min(W-40, tx));
-  ty = Math.max(40, Math.min(H-40, ty));
+  tx = Math.max(30, Math.min(W-30, tx));
+  ty = Math.max(30, Math.min(H-30, ty));
   ax.tx = tx; ax.ty = ty;
   // move toward target
   const dx = tx-ax.x, dy=ty-ax.y;
@@ -128,7 +128,7 @@ function update(dt) {
   ax.gillPhase += dt*6;
 
   // oxygen
-  if (ax.y < 40) { // surface gulp
+  if (ax.y < 55) { // surface gulp (air zone)
     ax.oxygen = Math.min(100, ax.oxygen + 40*dt);
   } else {
     ax.oxygen = Math.max(0, ax.oxygen - 6*dt);
