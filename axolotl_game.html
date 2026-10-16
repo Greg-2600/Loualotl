@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Axolotl Lake Adventure</title>
+<title>Louxolotl</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { width: 100%; height: 100%; overflow: hidden; background: #07323c; font-family: "Comic Sans MS", "Trebuchet MS", Verdana, sans-serif; }
@@ -27,10 +27,10 @@
 </head>
 <body>
 <canvas id="game"></canvas>
-<div class="hint" id="hint">Move with mouse / touch / arrow keys &nbsp;•&nbsp; Eat food &nbsp;•&nbsp; Avoid rocks &amp; hungry fish &nbsp;•&nbsp; M mute &nbsp;•&nbsp; N water sounds</div>
+<div class="hint" id="hint">Move with mouse / touch / arrow keys &nbsp;•&nbsp; Eat food &nbsp;•&nbsp; Avoid hungry fish &nbsp;•&nbsp; M mute &nbsp;•&nbsp; N water sounds</div>
 <button id="mutebtn">🔊 Sound</button>
 <button id="ambbtn">🌊 Ambience</button>
-<div id="lakename" style="position:fixed;top:8px;left:50%;transform:translateX(-50%);color:#FFEB3B;font-size:24px;font-weight:bold;text-shadow:2px 2px 4px #000;pointer-events:none;text-align:center;white-space:nowrap;">Lake Xochililco</div>
+<div id="lakename" style="position:fixed;top:8px;left:50%;transform:translateX(-50%);color:#FFEB3B;font-size:24px;font-weight:bold;text-shadow:2px 2px 4px #000;pointer-events:none;text-align:center;white-space:nowrap;">Louxolotl <span style="font-size:14px;font-weight:normal;color:#fff;opacity:0.85;">· Lake Xochimilco</span></div>
 <script>
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -243,14 +243,15 @@ applyAmbient();
 // --- Game data ---
 const ax = { x: W/2, y: H/2, tx: W/2, ty: H/2, vx:0, vy:0, angle:0, gillPhase:0, swim:0, tailPhase:0, flick:0, eaten:0, oxygen:100,
   limbs: { leftArm:true, rightArm:true, tail:true }, regenUntil:0, regenTarget:null, invuln:0,
-  mouth:0, mouthHold:0, mouthOpen:false, speck: Math.random()*6.283 };
+  mouth:0, mouthHold:0, mouthOpen:false, speck: Math.random()*6.283,
+  spin:0, spinRate:0, blowT: 1 + Math.random()*3 };
 let foods = [];
 let dangers = [];
 let proteins = [];
 let particles = [];
 let bubbles = [];
 const npcs = [];
-for (let i=0;i<4;i++) npcs.push({ x: Math.random()*W, y: Math.random()*(H-120)+60, vx:(Math.random()-0.5)*80, vy:(Math.random()-0.5)*40, angle:0, gillPhase:Math.random()*10, swim:0, tailPhase:Math.random()*10, flick:0, limbs:{leftArm:true,rightArm:true,tail:true}, regenUntil:0, invuln:0, eaten:0, oxygen:40+Math.random()*60, think:Math.random()*0.5, mode:'wander', target:null, foodRef:null, inAir:false, mouth:0, mouthHold:0, mouthOpen:false, speck:Math.random()*6.283 });
+for (let i=0;i<4;i++) npcs.push({ x: Math.random()*W, y: Math.random()*(H-120)+60, vx:(Math.random()-0.5)*80, vy:(Math.random()-0.5)*40, angle:0, gillPhase:Math.random()*10, swim:0, tailPhase:Math.random()*10, flick:0, limbs:{leftArm:true,rightArm:true,tail:true}, regenUntil:0, invuln:0, eaten:0, oxygen:40+Math.random()*60, think:Math.random()*0.5, mode:'wander', target:null, foodRef:null, inAir:false, mouth:0, mouthHold:0, mouthOpen:false, speck:Math.random()*6.283, spin:0, spinRate:0, blowT: Math.random()*5, playT:0, playKind:null, chaseRef:null });
 let score = 0;
 let factShown = false;
 let facts = [
@@ -277,6 +278,28 @@ function updateMouth(a, minFD, dt) {
   if (a.mouth < 0.01) a.mouth = 0;
 }
 function bite(a) { a.mouthHold = 0.3; a.mouthOpen = true; a.mouth = Math.max(a.mouth, 0.95); }
+
+// --- Playful antics ------------------------------------------------
+// Happy barrel-roll twirls, little puffs of bubbles from the snout, and
+// burst-of-speed darts. Purely for charm — none of it affects the game.
+function twirl(a, dur = 0.6) {
+  if (a.spinRate) return;                       // one twirl at a time
+  a.spinRate = (Math.random() < 0.5 ? -1 : 1) * (Math.PI*2) / dur;
+  a.spin = 0;
+}
+function updateTwirl(a, dt) {
+  if (!a.spinRate) return;
+  a.spin += a.spinRate*dt;
+  if (Math.abs(a.spin) >= Math.PI*2 - 0.02) { a.spin = 0; a.spinRate = 0; }
+}
+function blowBubbles(a, n = 3) {
+  const ca = Math.cos(a.angle), sa = Math.sin(a.angle);
+  for (let i=0;i<n;i++){
+    const lx = 37 + Math.random()*6, ly = (Math.random()-0.5)*5; // at the snout
+    bubbles.push({ x: a.x + lx*ca - ly*sa, y: a.y + lx*sa + ly*ca,
+                   s: 1.4 + Math.random()*2.4, vy: -(0.5 + Math.random()*1.1) });
+  }
+}
 let ambientBubbleTimer = 4 + Math.random()*6; // next little bubble stream
 
 // --- Depth scenery: layers recede into blue haze for a sense of distance ---
@@ -359,28 +382,21 @@ function spawnDanger() {
   const fromLeft = Math.random() < 0.5;
   const x = fromLeft ? -60 : W + 60;
   const dir = fromLeft ? 1 : -1; // always swim inward
-  if (Math.random() < 0.65) {
-    // bias toward small fish, so giants feel special
-    const r = 18 + Math.pow(Math.random(), 1.6) * 38; // 18 .. 56
-    // small fish dart, big fish lumber
-    const spd = Math.min(2.8, (42/r) * (0.9 + Math.random()*0.5));
-    const c = FISH_COLORS[Math.floor(Math.random()*FISH_COLORS.length)];
-    const top = r*1.15 + 30, bot = H - r*0.8 - 20; // keep fin + body on screen
-    const y = top + Math.random()*Math.max(20, bot - top);
-    dangers.push({
-      x, y, r, type: 'fish', vx: spd * dir,
-      body: c.body, fin: c.fin, stripe: c.stripe || null,
-      wobble: Math.random()*Math.PI*2
-    });
-  } else {
-    dangers.push({
-      x, y: 80 + Math.random()*Math.max(30, H-170),
-      r: 26 + Math.random()*14, type: 'rock',
-      vx: 0.5 * dir
-    });
-  }
+  // just fish now — the sharp, hard rocks are gone, so it's a friendlier lake
+  // bias toward small fish, so giants feel special
+  const r = 18 + Math.pow(Math.random(), 1.6) * 38; // 18 .. 56
+  // small fish dart, big fish lumber
+  const spd = Math.min(2.8, (42/r) * (0.9 + Math.random()*0.5));
+  const c = FISH_COLORS[Math.floor(Math.random()*FISH_COLORS.length)];
+  const top = r*1.15 + 30, bot = H - r*0.8 - 20; // keep fin + body on screen
+  const y = top + Math.random()*Math.max(20, bot - top);
+  dangers.push({
+    x, y, r, type: 'fish', vx: spd * dir,
+    body: c.body, fin: c.fin, stripe: c.stripe || null,
+    wobble: Math.random()*Math.PI*2
+  });
 }
-setInterval(spawnDanger, 4000);
+setInterval(spawnDanger, 6000); // one fish at a time, same rate as before
 
 function addParticles(x,y,color,n=8) {
   for (let i=0;i<n;i++){
@@ -422,6 +438,19 @@ function update(dt) {
   // gills beat faster and the tail flicks harder the more we swim
   ax.gillPhase += dt * (3 + ax.swim*16 + ax.flick*9);
   ax.tailPhase += dt * (2.5 + ax.swim*17 + ax.flick*16);
+
+  // playful: a lazy tail swish and the odd happy twirl when idling, plus
+  // little puffs of bubbles from the snout now and then
+  updateTwirl(ax, dt);
+  if (ax.swim < 0.1) {
+    if (Math.random() < 0.006) ax.flick = Math.max(ax.flick, 0.7);
+    if (Math.random() < 0.0015) twirl(ax, 0.8);
+  }
+  ax.blowT -= dt;
+  if (ax.blowT <= 0) {
+    ax.blowT = 3 + Math.random()*6;
+    if (ax.swim < 0.5) blowBubbles(ax, 2 + (Math.random()*3|0));
+  }
 
   // oxygen
   if (ax.y < 55) { // surface gulp (air zone)
@@ -469,6 +498,7 @@ function update(dt) {
       sEat();
       ax.flick = 1; // happy little tail flick on every bite
       bite(ax);     // open up for the morsel
+      if (ax.eaten % 5 === 0) { twirl(ax, 0.5); blowBubbles(ax, 4); } // extra-happy twirl
       if (ax.eaten % 10 === 0) {
         currentFact = facts[Math.floor(Math.random()*facts.length)];
         factTimer = 5;
@@ -581,18 +611,35 @@ function update(dt) {
       n.think = 0.35 + Math.random()*0.45;
       if (n.oxygen < 45) {
         // low on air — head up for a gulp
-        n.mode = 'air'; n.foodRef = null;
+        n.mode = 'air'; n.foodRef = null; n.chaseRef = null;
         n.target = { x: Math.max(50, Math.min(W-50, n.x + (Math.random()-0.5)*200)), y: 32 };
       } else {
-        // nearest morsel worth chasing?
-        let best = null, bd = 300;
+        // nearest morsel worth chasing? (only if it's close — otherwise: play!)
+        let best = null, bd = 190;
         for (const f of foods) {
           const d = Math.hypot(f.x-n.x, f.y-n.y);
           if (d < bd) { bd = d; best = f; }
         }
-        if (best) { n.mode = 'food'; n.foodRef = best; }
-        else {
-          n.mode = 'wander'; n.foodRef = null;
+        if (best) { n.mode = 'food'; n.foodRef = best; n.chaseRef = null; }
+        else if (Math.random() < 0.5) {
+          // nothing to eat — time to play!
+          n.mode = 'play'; n.foodRef = null;
+          const r = Math.random();
+          if (r < 0.45) {                        // dart: a burst of zoomies
+            n.playKind = 'dart'; n.playT = 0.55;
+            n.target = { x: 60 + Math.random()*(W-120), y: 90 + Math.random()*Math.max(40, H-170) };
+          } else if (r < 0.78) {                 // twirl: a happy barrel roll
+            n.playKind = 'twirl'; n.playT = 0.8;
+            n.target = { x: n.x + (Math.random()-0.5)*180, y: n.y + (Math.random()-0.5)*180 };
+            twirl(n, 0.7);
+          } else {                               // tag: chase a playmate
+            n.playKind = 'tag'; n.playT = 1.8;
+            const mates = npcs.filter(o => o !== n);
+            const mate = mates[(Math.random()*mates.length)|0];
+            n.chaseRef = mate; n.target = { x: mate.x, y: mate.y };
+          }
+        } else {
+          n.mode = 'wander'; n.foodRef = null; n.chaseRef = null;
           if (!n.target || Math.hypot(n.target.x-n.x, n.target.y-n.y) < 70)
             n.target = { x: 60 + Math.random()*(W-120), y: 100 + Math.random()*Math.max(40, H-190) };
         }
@@ -603,13 +650,28 @@ function update(dt) {
       if (!n.foodRef || !foods.includes(n.foodRef)) { n.mode = 'wander'; n.foodRef = null; n.think = 0; }
       else n.target = { x: n.foodRef.x, y: n.foodRef.y };
     }
+    // play: stick to a playmate while playing tag, and time the romp out
+    if (n.mode === 'play') {
+      if (n.playKind === 'tag' && n.chaseRef) {
+        n.target = { x: n.chaseRef.x, y: n.chaseRef.y };
+        if (Math.hypot(n.chaseRef.x-n.x, n.chaseRef.y-n.y) < 40) {
+          n.flick = 1; blowBubbles(n, 3);      // caught you! happy bubbles
+          n.mode = 'wander'; n.playT = 0; n.think = 0;
+        }
+      }
+      n.playT -= dt;
+      if (n.playT <= 0) { n.mode = 'wander'; n.think = 0; }
+    }
     if (n.mode === 'air' && n.oxygen > 95) { n.mode = 'wander'; n.think = 0; }
 
     // steer toward the target (eases off as it arrives)
     const tgt = n.target || { x: n.x, y: n.y };
     const ddx = tgt.x-n.x, ddy = tgt.y-n.y;
     const dd = Math.hypot(ddx,ddy) || 1;
-    const maxSpd = n.mode === 'food' ? 145 : n.mode === 'air' ? 125 : 72;
+    const maxSpd = n.mode === 'food' ? 145
+                 : n.mode === 'air'  ? 125
+                 : n.mode === 'play' ? (n.playKind === 'dart' ? 235 : n.playKind === 'tag' ? 175 : 110)
+                 : 72;
     const ease = Math.min(1, dd/70), k = Math.min(1, dt*2.4);
     n.vx += ((ddx/dd)*maxSpd*ease - n.vx) * k;
     n.vy += ((ddy/dd)*maxSpd*ease - n.vy) * k;
@@ -618,8 +680,13 @@ function update(dt) {
     n.y = Math.max(30, Math.min(H-40, n.y));
 
     n.angle = Math.atan2(n.vy, n.vx);
-    if (Math.random() < 0.004) n.flick = 1; // occasional gill/tail whip
+    const flickChance = n.mode === 'play' ? 0.03 : 0.006;
+    if (Math.random() < flickChance) n.flick = 1; // playful gill/tail whip
     n.flick = Math.max(0, (n.flick||0) - dt*1.6);
+    updateTwirl(n, dt);
+    // every so often, a little puff of bubbles from the snout
+    n.blowT -= dt;
+    if (n.blowT <= 0) { n.blowT = 4 + Math.random()*8; blowBubbles(n, 2 + (Math.random()*2|0)); }
     const sp = Math.hypot(n.vx, n.vy);
     n.swim += (Math.min(1, sp/110) - n.swim) * Math.min(1, dt*7);
     n.gillPhase += dt * (3 + n.swim*14 + n.flick*9);
@@ -654,7 +721,7 @@ function drawAxolotl(a) {
   const swim = a.swim || 0, tailPhase = a.tailPhase || 0, flick = a.flick || 0;
   ctx.save();
   ctx.translate(x,y);
-  ctx.rotate(angle);
+  ctx.rotate(angle + (a.spin || 0));
 
   const PINK   = '#FFB6C1';   // body
   const PINK_D = '#E87FA8';   // far-side limbs (shaded, recede)
@@ -1096,20 +1163,8 @@ function draw() {
   ctx.fillStyle='rgba(255,255,255,0.5)';
   bubbles.forEach(b=>{ctx.beginPath(); ctx.arc(b.x,b.y,b.s,0,Math.PI*2); ctx.fill();});
 
-  // dangers
-  dangers.forEach(d => {
-    if (d.type==='rock') {
-      ctx.fillStyle='#757575';
-      ctx.beginPath(); ctx.moveTo(d.x-d.r,d.y+d.r*0.5);
-      ctx.lineTo(d.x-d.r*0.5,d.y-d.r); ctx.lineTo(d.x+d.r*0.5,d.y-d.r*0.8);
-      ctx.lineTo(d.x+d.r,d.y+d.r*0.5); ctx.lineTo(d.x,d.y+d.r); ctx.closePath(); ctx.fill();
-      // sharp spikes
-      ctx.fillStyle='#424242';
-      ctx.beginPath(); ctx.moveTo(d.x,d.y-d.r*1.2); ctx.lineTo(d.x-4,d.y-d.r*0.5); ctx.lineTo(d.x+4,d.y-d.r*0.5); ctx.fill();
-    } else {
-      drawFish(d);
-    }
-  });
+  // dangers — only fish swim in this lake now
+  dangers.forEach(d => drawFish(d));
 
   // foods
   foods.forEach(drawFood);
