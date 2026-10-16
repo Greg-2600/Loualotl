@@ -6,7 +6,7 @@
 <title>Axolotl Lake Adventure</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { width: 100%; height: 100%; overflow: hidden; background: #0a2e4a; font-family: "Comic Sans MS", "Trebuchet MS", Verdana, sans-serif; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #07323c; font-family: "Comic Sans MS", "Trebuchet MS", Verdana, sans-serif; }
   body { display: flex; align-items: center; justify-content: center; }
   #game { display: block; touch-action: none; cursor: none; }
   #ui { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); color: #fff; font-size: 22px; text-shadow: 2px 2px 4px #000; pointer-events: none; }
@@ -174,6 +174,11 @@ function sEat() {
   tone({ f0: f, f1: f*1.45, dur: 0.09, vol: 0.25 });
   tone({ f0: f*2, dur: 0.07, vol: 0.1, delay: 0.06 });
 }
+// quiet bite for the other axolotls
+function sNpcEat() {
+  const f = 420 + Math.random()*220;
+  tone({ f0: f, f1: f*1.3, dur: 0.07, vol: 0.09 });
+}
 // ouch: little peep then a sad slide-whistle droop
 function sHurt() {
   tone({ f0: 880, f1: 620, dur: 0.08, vol: 0.2 });
@@ -236,15 +241,16 @@ applyAmbient();
 
 
 // --- Game data ---
-const ax = { x: W/2, y: H/2, tx: W/2, ty: H/2, vx:0, vy:0, angle:0, gillPhase:0, eaten:0, oxygen:100,
-  limbs: { leftArm:true, rightArm:true, tail:true }, regenUntil:0, regenTarget:null, invuln:0 };
+const ax = { x: W/2, y: H/2, tx: W/2, ty: H/2, vx:0, vy:0, angle:0, gillPhase:0, swim:0, tailPhase:0, flick:0, eaten:0, oxygen:100,
+  limbs: { leftArm:true, rightArm:true, tail:true }, regenUntil:0, regenTarget:null, invuln:0,
+  mouth:0, mouthHold:0, mouthOpen:false, speck: Math.random()*6.283 };
 let foods = [];
 let dangers = [];
 let proteins = [];
 let particles = [];
 let bubbles = [];
 const npcs = [];
-for (let i=0;i<4;i++) npcs.push({ x: Math.random()*W, y: Math.random()*(H-120)+60, vx:(Math.random()-0.5)*80, vy:(Math.random()-0.5)*40, angle:0, gillPhase:Math.random()*10, limbs:{leftArm:true,rightArm:true,tail:true}, regenUntil:0, invuln:0, eaten:0, oxygen:100 });
+for (let i=0;i<4;i++) npcs.push({ x: Math.random()*W, y: Math.random()*(H-120)+60, vx:(Math.random()-0.5)*80, vy:(Math.random()-0.5)*40, angle:0, gillPhase:Math.random()*10, swim:0, tailPhase:Math.random()*10, flick:0, limbs:{leftArm:true,rightArm:true,tail:true}, regenUntil:0, invuln:0, eaten:0, oxygen:40+Math.random()*60, think:Math.random()*0.5, mode:'wander', target:null, foodRef:null, inAir:false, mouth:0, mouthHold:0, mouthOpen:false, speck:Math.random()*6.283 });
 let score = 0;
 let factShown = false;
 let facts = [
@@ -258,6 +264,19 @@ let currentFact = facts[0];
 let factTimer = 0;
 let time = 0;
 let inAir = false; // for the surface-gulp sound
+let lastNpcEat = 0; // throttles the others' bites so it never rattles like chewing
+
+// Mouths open as they close in on food and stay open a beat after a bite —
+// a single open/close, never a chewing loop. No teeth, ever.
+function updateMouth(a, minFD, dt) {
+  if (a.mouthHold > 0) a.mouthHold -= dt;
+  if (!a.mouthOpen) { if (minFD < 46) a.mouthOpen = true; }
+  else if (minFD > 64) a.mouthOpen = false;      // hysteresis, so it can't flutter
+  const want = (a.mouthOpen || a.mouthHold > 0) ? 1 : 0;
+  a.mouth += (want - a.mouth) * Math.min(1, dt*14);
+  if (a.mouth < 0.01) a.mouth = 0;
+}
+function bite(a) { a.mouthHold = 0.3; a.mouthOpen = true; a.mouth = Math.max(a.mouth, 0.95); }
 let ambientBubbleTimer = 4 + Math.random()*6; // next little bubble stream
 
 // --- Depth scenery: layers recede into blue haze for a sense of distance ---
@@ -325,6 +344,17 @@ const FISH_COLORS = [
   { body:'#FF5A5A', fin:'#FFEB3B', stripe:'#FFFFFF' },  // coral red
 ];
 
+// Fixed speckle pattern for the axolotl's mottled skin [x, y, radius].
+// Positions sit well inside the body/head silhouette and keep clear of the
+// eyes and mouth; each axolotl jitters them slightly (see `speck`) so no two
+// look alike. Drawn clipped to the body, so nothing can spill past the edge.
+const SPECKLES = [
+  [-17,-4,1.2],[-13,-6,1.0],[-8,-5,1.3],[-3,-7,1.0],[2,-6,1.2],[7,-8,1.1],[12,-9,1.3],
+  [-15,2,1.0],[-10,4,1.2],[-4,5,1.0],[2,6,1.2],[8,6,1.0],[13,5,1.1],
+  [-5,-2,0.9],[6,-1,0.9],[0,1,0.8],[10,2,0.9],[-9,0,0.9],
+  [17,-10,1.0],[19,-9,1.1],[19,1,0.9],[15,7,1.0],
+];
+
 function spawnDanger() {
   const fromLeft = Math.random() < 0.5;
   const x = fromLeft ? -60 : W + 60;
@@ -379,12 +409,19 @@ function update(dt) {
   const dx = tx-ax.x, dy=ty-ax.y;
   const dist = Math.hypot(dx,dy);
   const speed = 180;
+  const px0 = ax.x, py0 = ax.y;
   if (dist>2) {
     const step = Math.min(dist, speed*dt);
     ax.x += (dx/dist)*step; ax.y += (dy/dist)*step;
     ax.angle = Math.atan2(dy,dx);
   }
-  ax.gillPhase += dt*6;
+  // how hard are we swimming? 0 = drifting, 1 = full tilt
+  const moved = dt > 0 ? Math.hypot(ax.x-px0, ax.y-py0)/dt : 0;
+  ax.swim += (Math.min(1, moved/speed) - ax.swim) * Math.min(1, dt*8);
+  ax.flick = Math.max(0, (ax.flick||0) - dt*1.6); // tail-flick impulse decays
+  // gills beat faster and the tail flicks harder the more we swim
+  ax.gillPhase += dt * (3 + ax.swim*16 + ax.flick*9);
+  ax.tailPhase += dt * (2.5 + ax.swim*17 + ax.flick*16);
 
   // oxygen
   if (ax.y < 55) { // surface gulp (air zone)
@@ -430,16 +467,25 @@ function update(dt) {
       ax.eaten++;
       addParticles(f.x, f.y, '#FFD700', 12);
       sEat();
+      ax.flick = 1; // happy little tail flick on every bite
+      bite(ax);     // open up for the morsel
       if (ax.eaten % 10 === 0) {
         currentFact = facts[Math.floor(Math.random()*facts.length)];
         factTimer = 5;
         sFact();
       }
-      if (foods.length < 6) spawnFood();
       return false;
     }
     return true;
   });
+
+  // mouth: open when food is close, then a beat after the bite
+  let nearFoodD = Infinity;
+  for (const f of foods) {
+    const d = Math.hypot(f.x-ax.x, f.y-ax.y);
+    if (d < nearFoodD) nearFoodD = d;
+  }
+  updateMouth(ax, nearFoodD, dt);
 
   // proteins collect
   proteins = proteins.filter(p => {
@@ -519,90 +565,259 @@ function update(dt) {
   driftSnow(snowFar, 0.05);
   driftSnow(snowNear, 0.12);
 
-  // npc swim
+  // npc axolotls: they wander, chase food, and surface for air
+  const npcNearPlayer = n => Math.hypot(n.x-ax.x, n.y-ax.y) < 420;
   npcs.forEach(n => {
-    n.x += n.vx*dt; n.y += n.vy*dt; n.gillPhase += dt*6;
-    if (n.x<40||n.x>W-40) n.vx*=-1;
-    if (n.y<40||n.y>H-40) n.vy*=-1;
-    n.angle = Math.atan2(n.vy,n.vx);
-    if (Math.random()<0.01){ n.vx += (Math.random()-0.5)*20; n.vy += (Math.random()-0.5)*20; }
+    // breathe: oxygen drains underwater, refills at the surface
+    if (n.y < 55) n.oxygen = Math.min(100, n.oxygen + 45*dt);
+    else          n.oxygen = Math.max(0, n.oxygen - 3.5*dt);
+    const inAirNow = n.y < 55;
+    if (inAirNow && !n.inAir && npcNearPlayer(n)) sGulp(); // a little gulp as they surface
+    n.inAir = inAirNow;
+
+    // re-plan a few times a second
+    n.think -= dt;
+    if (n.think <= 0) {
+      n.think = 0.35 + Math.random()*0.45;
+      if (n.oxygen < 45) {
+        // low on air — head up for a gulp
+        n.mode = 'air'; n.foodRef = null;
+        n.target = { x: Math.max(50, Math.min(W-50, n.x + (Math.random()-0.5)*200)), y: 32 };
+      } else {
+        // nearest morsel worth chasing?
+        let best = null, bd = 300;
+        for (const f of foods) {
+          const d = Math.hypot(f.x-n.x, f.y-n.y);
+          if (d < bd) { bd = d; best = f; }
+        }
+        if (best) { n.mode = 'food'; n.foodRef = best; }
+        else {
+          n.mode = 'wander'; n.foodRef = null;
+          if (!n.target || Math.hypot(n.target.x-n.x, n.target.y-n.y) < 70)
+            n.target = { x: 60 + Math.random()*(W-120), y: 100 + Math.random()*Math.max(40, H-190) };
+        }
+      }
+    }
+    // keep chasing the morsel we picked (it may drift)
+    if (n.mode === 'food') {
+      if (!n.foodRef || !foods.includes(n.foodRef)) { n.mode = 'wander'; n.foodRef = null; n.think = 0; }
+      else n.target = { x: n.foodRef.x, y: n.foodRef.y };
+    }
+    if (n.mode === 'air' && n.oxygen > 95) { n.mode = 'wander'; n.think = 0; }
+
+    // steer toward the target (eases off as it arrives)
+    const tgt = n.target || { x: n.x, y: n.y };
+    const ddx = tgt.x-n.x, ddy = tgt.y-n.y;
+    const dd = Math.hypot(ddx,ddy) || 1;
+    const maxSpd = n.mode === 'food' ? 145 : n.mode === 'air' ? 125 : 72;
+    const ease = Math.min(1, dd/70), k = Math.min(1, dt*2.4);
+    n.vx += ((ddx/dd)*maxSpd*ease - n.vx) * k;
+    n.vy += ((ddy/dd)*maxSpd*ease - n.vy) * k;
+    n.x += n.vx*dt; n.y += n.vy*dt;
+    n.x = Math.max(40, Math.min(W-40, n.x));
+    n.y = Math.max(30, Math.min(H-40, n.y));
+
+    n.angle = Math.atan2(n.vy, n.vx);
+    if (Math.random() < 0.004) n.flick = 1; // occasional gill/tail whip
+    n.flick = Math.max(0, (n.flick||0) - dt*1.6);
+    const sp = Math.hypot(n.vx, n.vy);
+    n.swim += (Math.min(1, sp/110) - n.swim) * Math.min(1, dt*7);
+    n.gillPhase += dt * (3 + n.swim*14 + n.flick*9);
+    n.tailPhase += dt * (2.5 + n.swim*16 + n.flick*16);
+
+    // gobble up any food they bump into
+    let nearFoodD = Infinity;
+    for (let i = foods.length-1; i >= 0; i--) {
+      const f = foods[i];
+      const fd = Math.hypot(f.x-n.x, f.y-n.y);
+      if (fd < nearFoodD) nearFoodD = fd;
+      if (fd < 26) {
+        foods.splice(i, 1);
+        n.eaten = (n.eaten||0) + 1;
+        addParticles(f.x, f.y, '#FFD700', 8);
+        bite(n);
+        // only a soft bite now and then, and only if you're nearby —
+        // four axolotls nibbling at once shouldn't sound like chewing
+        if (npcNearPlayer(n) && time - lastNpcEat > 0.45) { lastNpcEat = time; sNpcEat(); }
+      }
+    }
+    updateMouth(n, nearFoodD, dt);
   });
+  // keep the lake stocked (both the player and the others are eating now)
+  while (foods.length < 7) spawnFood();
   if (factTimer>0) factTimer -= dt;
 }
 
 function drawAxolotl(a) {
   if (!a) a = ax;
   const {x,y,angle,limbs,gillPhase} = a;
+  const swim = a.swim || 0, tailPhase = a.tailPhase || 0, flick = a.flick || 0;
   ctx.save();
   ctx.translate(x,y);
   ctx.rotate(angle);
-  // body
-  ctx.fillStyle = '#FFB6C1';
-  ctx.beginPath();
-  ctx.ellipse(0,0,34,20,0,0,Math.PI*2);
-  ctx.fill();
-  // tail
-  if (limbs.tail) {
-    ctx.fillStyle = '#FFC0CB';
-    ctx.beginPath();
-    ctx.moveTo(-28,0);
-    ctx.quadraticCurveTo(-55, -12, -70, 0);
-    ctx.quadraticCurveTo(-55, 12, -28, 0);
-    ctx.fill();
-  } else if (a.regenUntil>0) {
-    // stub growing
-    const t = 1 - a.regenUntil/5;
-    ctx.fillStyle = '#FFC0CB';
-    ctx.beginPath();
-    ctx.ellipse(-30,0, 6+4*t, 4, 0,0,Math.PI*2);
-    ctx.fill();
-  }
-  // legs
-  const drawLeg = (side) => {
-    ctx.fillStyle = '#FF69B4';
-    ctx.beginPath();
-    ctx.ellipse(8, side*16, 10, 6, 0,0,Math.PI*2);
-    ctx.fill();
-    // toes
-    for (let i=0;i<3;i++){
-      ctx.beginPath();
-      ctx.arc(16, side*(12+i*3), 2.5,0,Math.PI*2);
-      ctx.fill();
+
+  const PINK   = '#FFB6C1';   // body
+  const PINK_D = '#E87FA8';   // far-side limbs (shaded, recede)
+  const BELLY  = '#FFE1EA';   // pale underside
+  const FIN    = '#FFC9D8';   // translucent fins
+  const SPECK  = '#EF7CA6';   // mottled skin
+  const LEGC   = '#FF8FB8';   // near-side limbs (in front)
+  const GILL   = '#E91E63';
+  const GILL_T = '#F06292';
+  const MOUTH  = '#c2185b';
+
+  // ---- far-side legs (behind the body) ----
+  const leg = (cx, cy, sc, col) => {
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.ellipse(cx, cy, 4.2*sc, 5.5*sc, 0, 0, Math.PI*2); ctx.fill();
+    for (let i=-1;i<=1;i++){
+      ctx.beginPath(); ctx.arc(cx + i*2.8*sc, cy + 5.2*sc, 1.7*sc, 0, Math.PI*2); ctx.fill();
     }
   };
-  if (limbs.leftArm) drawLeg(-1); else if (a.regenUntil>0){ ctx.fillStyle='#FF69B4'; ctx.beginPath(); ctx.arc(8,-16,4,0,Math.PI*2); ctx.fill(); }
-  if (limbs.rightArm) drawLeg(1); else if (a.regenUntil>0){ ctx.fillStyle='#FF69B4'; ctx.beginPath(); ctx.arc(8,16,4,0,Math.PI*2); ctx.fill(); }
-  // head
-  ctx.fillStyle = '#FFB6C1';
-  ctx.beginPath();
-  ctx.ellipse(24,0,18,16,0,0,Math.PI*2);
-  ctx.fill();
-  // eyes
-  ctx.fillStyle = '#000';
-  ctx.beginPath(); ctx.arc(30,-6,4,0,Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.arc(30,6,4,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle = '#fff';
-  ctx.beginPath(); ctx.arc(31,-7,1.5,0,Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.arc(31,5,1.5,0,Math.PI*2); ctx.fill();
-  // smile
-  ctx.strokeStyle = '#c2185b'; ctx.lineWidth=2;
-  ctx.beginPath(); ctx.arc(34,0,6,0.2,Math.PI-0.2); ctx.stroke();
-  // gills (feathery external)
+  if (limbs.leftArm)  leg(10, 11.5, 0.8, PINK_D);
+  if (limbs.rightArm) leg(-16, 11, 0.8, PINK_D);
+
+  // ---- tail: hinged at the base, carrying its translucent caudal fin ----
+  if (limbs.tail) {
+    ctx.save();
+    ctx.translate(-19, 0);
+    ctx.rotate(Math.sin(tailPhase) * (0.03 + swim*0.12 + flick*0.16));
+    // caudal fin (drawn first, so the tail flesh sits on top of it)
+    ctx.globalAlpha = 0.55; ctx.fillStyle = FIN;
+    ctx.beginPath();
+    ctx.moveTo(3,-8);
+    ctx.quadraticCurveTo(-12,-23, -26,-3);
+    ctx.quadraticCurveTo(-30,0, -26,3);
+    ctx.quadraticCurveTo(-12,22.5, 3,8);
+    ctx.closePath(); ctx.fill();
+    ctx.globalAlpha = 1;
+    // tail flesh — tapers to the point of the original tail
+    ctx.fillStyle = PINK;
+    ctx.beginPath();
+    ctx.moveTo(1,-9);
+    ctx.quadraticCurveTo(-12,-8, -21,-2);
+    ctx.quadraticCurveTo(-24,0, -21,2);
+    ctx.quadraticCurveTo(-12,8, 1,9);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = SPECK;
+    for (const s of [[-5,-3],[-11,1],[-5,3],[-16,-1],[-9,-1]]) {
+      ctx.beginPath(); ctx.arc(s[0], s[1], 1.1, 0, Math.PI*2); ctx.fill();
+    }
+    ctx.restore();
+  } else if (a.regenUntil>0) {
+    // regrowing stub
+    const t = 1 - a.regenUntil/5;
+    ctx.fillStyle = PINK;
+    ctx.beginPath();
+    ctx.ellipse(-22, 0, 3+5*t, 3+3*t, 0, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  // ---- low dorsal ridge: continues the tail fin forward along the back ----
+  if (limbs.tail) {
+    ctx.globalAlpha = 0.4; ctx.fillStyle = FIN;
+    ctx.beginPath();
+    ctx.moveTo(6,-13.5);
+    ctx.quadraticCurveTo(-6,-17, -21,-9);
+    ctx.lineTo(-21,-5);
+    ctx.quadraticCurveTo(-6,-12, 6,-11.5);
+    ctx.closePath(); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // ---- body + head: one smooth axolotl silhouette ----
+  // Long tubular body, broad flattened head, tapering to the tail base.
+  const bodyPath = () => {
+    ctx.beginPath();
+    ctx.moveTo(42, 1);                          // snout tip
+    ctx.quadraticCurveTo(41,-6, 31,-10.5);      // top of the snout
+    ctx.quadraticCurveTo(20,-13, 8,-12.5);      // flat skull
+    ctx.quadraticCurveTo(-5,-11.5, -21,-9);     // back, down to the tail base
+    ctx.lineTo(-21, 9);                         // tail base (tucked under the tail)
+    ctx.quadraticCurveTo(-5,13.5, 8,13.5);      // belly
+    ctx.quadraticCurveTo(22,14.5, 29,11);       // chest to chin
+    ctx.quadraticCurveTo(39,8, 42,1);           // lower snout
+    ctx.closePath();
+  };
+  ctx.fillStyle = PINK;
+  bodyPath(); ctx.fill();
+
+  // Pale underside + mottled skin, clipped to the body so nothing spills off it.
+  ctx.save();
+  bodyPath(); ctx.clip();
+  ctx.fillStyle = BELLY; ctx.fillRect(-60,-60,140,140);
+  ctx.save(); ctx.translate(0,-5); ctx.fillStyle = PINK; bodyPath(); ctx.fill(); ctx.restore();
+  ctx.fillStyle = SPECK;
+  const seed = a.speck || 0;
+  for (let i=0;i<SPECKLES.length;i++){
+    const s = SPECKLES[i];
+    const j1 = Math.sin(i*12.9898 + seed)*43758.5453;
+    const j2 = Math.sin(i*78.233 + seed*1.7)*12543.12;
+    const jx = (j1 - Math.floor(j1) - 0.5)*2.4, jy = (j2 - Math.floor(j2) - 0.5)*2.4;
+    ctx.beginPath(); ctx.arc(s[0]+jx, s[1]+jy, s[2], 0, Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+
+  // ---- near-side legs (in front of the body) ----
+  if (limbs.leftArm) leg(16.5, 15.5, 1, LEGC);
+  else if (a.regenUntil>0){ ctx.fillStyle=LEGC; ctx.beginPath(); ctx.arc(16.5,12.5,3.4,0,Math.PI*2); ctx.fill(); }
+  if (limbs.rightArm) leg(-11.5, 14.5, 1, LEGC);
+  else if (a.regenUntil>0){ ctx.fillStyle=LEGC; ctx.beginPath(); ctx.arc(-11.5,11.5,3.4,0,Math.PI*2); ctx.fill(); }
+
+  // ---- mouth: a friendly smile on the snout, blooming into an open "O" for a
+  // bite. Never any teeth, and it sits well clear of the eyes. ----
+  const mouth = a.mouth || 0;
+  const mx = 36.5, my = 1.8;
+  if (mouth > 0.02) {
+    const mw = 2.7 + mouth*0.85, mh = 1.3 + mouth*2.9;
+    ctx.fillStyle = '#8E1B3C';                 // dark interior of the open mouth
+    ctx.beginPath(); ctx.ellipse(mx, my, mw, mh, 0, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = MOUTH; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.ellipse(mx, my, mw, mh, 0, 0, Math.PI*2); ctx.stroke();
+  } else {
+    ctx.strokeStyle = MOUTH; ctx.lineWidth = 2; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.arc(mx, my, 3.6, 0.3, Math.PI-0.3); ctx.stroke();
+  }
+
+  // ---- gills: three feathery, fringed stalks per side, rooted BEHIND the head,
+  // fanning back and out. They grow filaments like a real axolotl's, and they
+  // flutter on the tips (strongest on the outer stalks) and trail back when
+  // swimming — so no stalk ever crosses the eyes. ----
+  const gAmp = 3 + swim*6 + flick*5;
+  const sweep = swim*8 + flick*6;
   for (let side=-1; side<=1; side+=2) {
     for (let i=0;i<3;i++){
-      const wave = Math.sin(gillPhase + i + (side>0?0:1)) * 4;
-      ctx.strokeStyle = '#E91E63';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(20, side*(8+i*3));
-      ctx.quadraticCurveTo(32+wave, side*(12+i*3+wave), 38, side*(16+i*4));
-      ctx.stroke();
-      // tips
-      ctx.fillStyle = '#F06292';
-      ctx.beginPath();
-      ctx.arc(38, side*(16+i*4), 3,0,Math.PI*2);
-      ctx.fill();
+      const wave = Math.sin(gillPhase + i*0.9 + (side>0?0:1.2)) * gAmp * (0.45 + i*0.275);
+      const rx = 16 - i*2,               ry = side*(6.5 + i*3);
+      const tx = 7 - i*6 - sweep,        ty = side*(17 + i*3) + wave*0.6;
+      const cx = 14 - i*4 - sweep*0.4,   cy = side*(13 + i*3) + wave*0.35;
+      ctx.strokeStyle = GILL; ctx.lineWidth = 3; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(rx, ry); ctx.quadraticCurveTo(cx, cy, tx, ty); ctx.stroke();
+      // feathery fringe along the outer edge of the stalk
+      ctx.strokeStyle = GILL_T; ctx.lineWidth = 1.5;
+      for (let k=1;k<=4;k++){
+        const t = 0.18 + k*0.17, mt = 1-t;
+        const px = mt*mt*rx + 2*mt*t*cx + t*t*tx;
+        const py = mt*mt*ry + 2*mt*t*cy + t*t*ty;
+        const dx = 2*(mt*(cx-rx) + t*(tx-cx)), dy = 2*(mt*(cy-ry) + t*(ty-cy));
+        const L = Math.hypot(dx,dy) || 1;
+        const nx = side*dy/L, ny = -side*dx/L;      // outward normal
+        const fl = 4.2 - k*0.4;
+        ctx.beginPath(); ctx.moveTo(px, py);
+        ctx.lineTo(px + nx*fl + dx/L*fl*0.6, py + ny*fl + dy/L*fl*0.6);
+        ctx.stroke();
+      }
+      ctx.fillStyle = GILL_T;
+      ctx.beginPath(); ctx.arc(tx, ty, 2.8, 0, Math.PI*2); ctx.fill();
     }
+  }
+
+  // ---- eyes: small and bead-like, drawn last so nothing can cross them ----
+  for (const ey of [-6, 4]) {
+    ctx.fillStyle = '#141414';
+    ctx.beginPath(); ctx.arc(27, ey, 3.2, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(28.1, ey-1.2, 1.1, 0, Math.PI*2); ctx.fill();
   }
   ctx.restore();
 }
@@ -738,16 +953,16 @@ function drawFish(d) {
 function draw() {
   // deep water: brighter at the surface, sinking into darkness below
   const grad = ctx.createLinearGradient(0,0,0,H);
-  grad.addColorStop(0.00,'#2E96DC');
-  grad.addColorStop(0.30,'#1B76BC');
-  grad.addColorStop(0.65,'#13598F');
-  grad.addColorStop(1.00,'#0B3963');
+  grad.addColorStop(0.00,'#37B3B4');
+  grad.addColorStop(0.30,'#2094A6');
+  grad.addColorStop(0.65,'#166E88');
+  grad.addColorStop(1.00,'#0B3F58');
   ctx.fillStyle = grad;
   ctx.fillRect(0,0,W,H);
 
   // --- far distance: haze band, lake-bed silhouette, tiny plants, drifting schools ---
   // distant lake bed
-  ctx.fillStyle = 'rgba(30,86,130,0.55)';
+  ctx.fillStyle = 'rgba(26,84,96,0.55)';
   ctx.beginPath();
   ctx.moveTo(0,H);
   for (let x=0; x<=W; x+=60) {
@@ -759,14 +974,14 @@ function draw() {
 
   // distant rounded boulders
   farRocks.forEach(rk => {
-    ctx.fillStyle = 'rgba(24,74,112,0.5)';
+    ctx.fillStyle = 'rgba(22,72,86,0.5)';
     ctx.beginPath();
     ctx.ellipse(rk.x, rk.y, rk.r, rk.r*0.6, 0, Math.PI, Math.PI*2);
     ctx.fill();
   });
 
   // far plants — pale blue silhouettes, faded but still readable
-  ctx.strokeStyle = 'rgba(130,200,230,0.38)';
+  ctx.strokeStyle = 'rgba(130,215,200,0.38)';
   farPlants.forEach(p => {
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -786,7 +1001,7 @@ function draw() {
     ctx.save();
     ctx.translate(f.x, f.y);
     ctx.scale(flip, 1);
-    ctx.fillStyle = `rgba(150,215,240,${a})`;
+    ctx.fillStyle = `rgba(150,228,215,${a})`;
     ctx.beginPath();
     ctx.ellipse(0,0, f.r, f.r*0.5, 0, 0, Math.PI*2);
     ctx.fill();
@@ -805,9 +1020,9 @@ function draw() {
   rays.forEach(r => {
     const a = 0.05 + 0.045*Math.sin(time*0.5 + r.phase);
     const g = ctx.createLinearGradient(0,0,0,H*0.9);
-    g.addColorStop(0, `rgba(200,240,255,${Math.max(0,a)})`);
-    g.addColorStop(0.55, `rgba(180,230,255,${Math.max(0,a*0.5)})`);
-    g.addColorStop(1, 'rgba(180,230,255,0)');
+    g.addColorStop(0, `rgba(200,252,242,${Math.max(0,a)})`);
+    g.addColorStop(0.55, `rgba(180,242,235,${Math.max(0,a*0.5)})`);
+    g.addColorStop(1, 'rgba(180,242,235,0)');
     ctx.fillStyle = g;
     ctx.beginPath();
     ctx.moveTo(r.x, 0);
@@ -821,15 +1036,15 @@ function draw() {
 
   // far marine snow
   snowFar.forEach(s => {
-    ctx.fillStyle = `rgba(210,240,255,${s.a})`;
+    ctx.fillStyle = `rgba(205,245,238,${s.a})`;
     ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI*2); ctx.fill();
   });
 
   // depth haze: things fade toward the deep, so distance reads as depth
   const haze = ctx.createLinearGradient(0,0,0,H);
-  haze.addColorStop(0,'rgba(8,40,72,0)');
-  haze.addColorStop(0.55,'rgba(8,40,72,0.12)');
-  haze.addColorStop(1,'rgba(4,26,50,0.42)');
+  haze.addColorStop(0,'rgba(7,44,56,0)');
+  haze.addColorStop(0.55,'rgba(7,44,56,0.12)');
+  haze.addColorStop(1,'rgba(4,28,40,0.42)');
   ctx.fillStyle = haze;
   ctx.fillRect(0,0,W,H);
 
@@ -925,7 +1140,7 @@ function draw() {
 
   // near marine snow, in front of everything — the closest layer
   snowNear.forEach(s => {
-    ctx.fillStyle = `rgba(215,242,255,${s.a*0.9})`;
+    ctx.fillStyle = `rgba(210,248,242,${s.a*0.9})`;
     ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI*2); ctx.fill();
   });
 
