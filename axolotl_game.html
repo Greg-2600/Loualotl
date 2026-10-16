@@ -779,18 +779,18 @@ function drawAxolotl(a) {
     ctx.beginPath(); ctx.arc(mx, my, 3.6, 0.3, Math.PI-0.3); ctx.stroke();
   }
 
-  // ---- gills: three feathery, fringed stalks per side, rooted BEHIND the head,
-  // fanning back and out. They grow filaments like a real axolotl's, and they
-  // flutter on the tips (strongest on the outer stalks) and trail back when
+  // ---- gills: three short feathery, fringed stalks per side, rooted BEHIND the
+  // head and fanning outward. They grow filaments like a real axolotl's, and
+  // they flutter on the tips (strongest on the outer stalks) and trail back when
   // swimming — so no stalk ever crosses the eyes. ----
-  const gAmp = 3 + swim*6 + flick*5;
-  const sweep = swim*8 + flick*6;
+  const gAmp = 3 + swim*5 + flick*4;
+  const sweep = swim*5 + flick*4;
   for (let side=-1; side<=1; side+=2) {
     for (let i=0;i<3;i++){
       const wave = Math.sin(gillPhase + i*0.9 + (side>0?0:1.2)) * gAmp * (0.45 + i*0.275);
-      const rx = 16 - i*2,               ry = side*(6.5 + i*3);
-      const tx = 7 - i*6 - sweep,        ty = side*(17 + i*3) + wave*0.6;
-      const cx = 14 - i*4 - sweep*0.4,   cy = side*(13 + i*3) + wave*0.35;
+      const rx = 16 - i*3,                   ry = side*11.5;
+      const tx = 11.5 - i*5 - sweep*0.5,     ty = side*16.75 + wave*0.35;
+      const cx = 13.75 - i*4 - sweep*0.25,   cy = side*14.5 + wave*0.22;
       ctx.strokeStyle = GILL; ctx.lineWidth = 3; ctx.lineCap = 'round';
       ctx.beginPath(); ctx.moveTo(rx, ry); ctx.quadraticCurveTo(cx, cy, tx, ty); ctx.stroke();
       // feathery fringe along the outer edge of the stalk
@@ -802,13 +802,13 @@ function drawAxolotl(a) {
         const dx = 2*(mt*(cx-rx) + t*(tx-cx)), dy = 2*(mt*(cy-ry) + t*(ty-cy));
         const L = Math.hypot(dx,dy) || 1;
         const nx = side*dy/L, ny = -side*dx/L;      // outward normal
-        const fl = 4.2 - k*0.4;
+        const fl = 2.6 - k*0.3;
         ctx.beginPath(); ctx.moveTo(px, py);
         ctx.lineTo(px + nx*fl + dx/L*fl*0.6, py + ny*fl + dy/L*fl*0.6);
         ctx.stroke();
       }
       ctx.fillStyle = GILL_T;
-      ctx.beginPath(); ctx.arc(tx, ty, 2.8, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(tx, ty, 2.3, 0, Math.PI*2); ctx.fill();
     }
   }
 
