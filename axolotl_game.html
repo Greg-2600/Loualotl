@@ -27,7 +27,7 @@
 </head>
 <body>
 <canvas id="game"></canvas>
-<div class="hint" id="hint">Move with mouse / touch / arrow keys &nbsp;•&nbsp; Eat food &nbsp;•&nbsp; Avoid hungry fish &nbsp;•&nbsp; M mute &nbsp;•&nbsp; N water sounds</div>
+<div class="hint" id="hint">Move: mouse / touch / arrows / WASD &nbsp;•&nbsp; 1 = surface &nbsp;•&nbsp; 2 = dive &nbsp;•&nbsp; Eat food &amp; toothless fish &nbsp;•&nbsp; Dodge fish with teeth &nbsp;•&nbsp; M mute &nbsp;•&nbsp; N water sounds</div>
 <button id="mutebtn">🔊 Sound</button>
 <button id="ambbtn">🌊 Ambience</button>
 <div id="lakename" style="position:fixed;top:8px;left:50%;transform:translateX(-50%);color:#FFEB3B;font-size:24px;font-weight:bold;text-shadow:2px 2px 4px #000;pointer-events:none;text-align:center;white-space:nowrap;">Louxolotl <span style="font-size:14px;font-weight:normal;color:#fff;opacity:0.85;">· Lake Xochimilco</span></div>
@@ -46,20 +46,34 @@ window.addEventListener('resize', resize); resize();
 
 // --- State ---
 const keys = {};
+// letter keys come through lowercase unless shift/caps is on — store them
+// lowercase too, so WASD always works
+const normKey = e => e.key.length === 1 ? e.key.toLowerCase() : e.key;
 window.addEventListener('keydown', e => {
-  if (e.key.startsWith('Arrow')) { e.preventDefault(); keys[e.key] = true; }
-  else keys[e.key] = true;
+  const k = normKey(e);
+  if (k.startsWith('Arrow') || k === '1' || k === '2') { e.preventDefault(); keys[k] = true; }
+  else keys[k] = true;
 }, { capture: true });
-window.addEventListener('keyup', e => { keys[e.key] = false; if (e.key.startsWith('Arrow')) e.preventDefault(); }, { capture: true });
+window.addEventListener('keyup', e => { const k = normKey(e); keys[k] = false; if (k.startsWith('Arrow')) e.preventDefault(); }, { capture: true });
 // keep window focusable
 canvas.setAttribute('tabindex','0');
 canvas.focus();
 window.focus();
 
 let pointer = { x: W/2, y: H/2, active: false };
+let quickMove = null; // 'up' (key 1) or 'down' (key 2) — a held course until we arrive
 canvas.addEventListener('mousemove', e => { pointer.x = e.clientX; pointer.y = e.clientY; pointer.active = true; });
 canvas.addEventListener('touchstart', e => { const t=e.touches[0]; pointer.x=t.clientX; pointer.y=t.clientY; pointer.active=true; }, {passive:true});
 canvas.addEventListener('touchmove', e => { const t=e.touches[0]; pointer.x=t.clientX; pointer.y=t.clientY; pointer.active=true; e.preventDefault(); }, {passive:false});
+// keys 1 and 2: ride to the surface / dive to the bed. Direction keys take
+// back control (handled in update); the mouse doesn't cancel it, or a resting
+// hand would stop it from ever working on desktop.
+window.addEventListener('keydown', e => {
+  if (e.repeat) return;
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (k === '1') quickMove = 'up';
+  if (k === '2') quickMove = 'down';
+});
 
 // --- Sound: tiny cute synth (Web Audio, no assets) ---
 let muted = false, ambientOn = true;
@@ -255,14 +269,73 @@ for (let i=0;i<4;i++) npcs.push({ x: Math.random()*W, y: Math.random()*(H-120)+6
 let score = 0;
 let factShown = false;
 let facts = [
+  // your favourites
   "Axolotls are amphibians that stay underwater their whole lives!",
   "Axolotls can grow back a lost leg in just a few weeks!",
   "Their feathery gills help them breathe underwater.",
   "Axolotls only live in Lake Xochimilco, Mexico!",
   "Baby axolotls are called larvae and look like tiny tadpoles.",
+  "The axolotl is named after Xólotl, an Aztec god of fire!",
+  "Axolotls can regrow parts of their heart and even their brain!",
+  "Axolotls never finish growing up — scientists call it neoteny!",
+  "A smiley axolotl finds its food by sensing tiny splashes and wiggles.",
+  "Axolotls can have dozens of tiny teeth — all far too small to bite!",
+  // looks & body
+  "Axolotls come in white, black, golden, and piebald colours!",
+  "The white ones with pink gills are the most famous pets.",
+  "Wild axolotls are dark brown with gold speckles, like this one!",
+  "An axolotl's feathery gills are sometimes called a crown.",
+  "An axolotl's tail makes up about half of its length.",
+  "An axolotl's skeleton is mostly soft cartilage, not hard bone.",
+  "They have no eyelids, so axolotls never close their eyes.",
+  "A grown axolotl can be about as long as your forearm.",
+  "Axolotls have a built-in sonar: a lateral line that feels vibrations!",
+  "Axolotls can sense weak electrical fields in the water around them!",
+  // eating
+  "Axolotls don't chew — they suck food in with a gulp of water!",
+  "That smile is just the shape of their face. They always look happy!",
+  "They wiggle their tail to lure prey close, then gulp!",
+  "Axolotls hunt at night, when the canal water is cool and dark.",
+  "Axolotls can eat shrimp, worms, and tiny toothless fish!",
+  "Baby axolotls start on tiny water bugs called daphnia.",
+  "Axolotls can rearrange their jaws to swallow surprisingly big bites!",
+  "Axolotls pump water over their gills by puffing their cheeks!",
+  // healing & science
+  "Axolotls can regrow the same limb over and over, perfectly each time.",
+  "Scientists study axolotls to learn how human bodies might heal.",
+  "Axolotls can regrow skin, muscle, bone, and even nerves!",
+  "A protein called nAG helps axolotls rebuild lost limbs.",
+  "An axolotl's heartbeat is slow and steady in cool water.",
+  "Warm water stresses axolotls — they like it chilly!",
+  "Axolotls absorb a little oxygen through their skin, too.",
+  // history & home
+  "Axolotls are critically endangered in the wild.",
+  "Rescue programmes breed axolotls to help restock the canals!",
+  "The canals of Xochimilco are a UNESCO World Heritage site.",
+  "The Aztecs kept axolotls long before aquariums existed!",
+  "Axolotls were once thought to be a kind of water dog.",
+  "Its scientific name, Ambystoma mexicanum, means Mexican blunt-mouth!",
+  "In Mexican Spanish, an axolotl is an ajolote.",
+  "The Mexican two-peso coin has an axolotl on it!",
+  "Axolotls can recognise the person who feeds them.",
+  "They can live more than 10 years — even 15 in good care!",
+  // fun
+  "An axolotl's best trick is regeneration, not fighting!",
+  "Despite their smile, axolotls would rather hide than fight!",
+  "Axolotls love hiding under plants — peekaboo!",
+  "A group of axolotls is rare to see: they're mostly lone explorers!",
 ];
 let currentFact = facts[0];
 let factTimer = 0;
+let factClock = 120; // first timed fact after 2 minutes, then every 2 minutes
+// show a fact, never the same one twice in a row
+function showFact() {
+  let f = currentFact;
+  while (f === currentFact) f = facts[Math.floor(Math.random()*facts.length)];
+  currentFact = f;
+  factTimer = 5;
+  sFact();
+}
 let time = 0;
 let inAir = false; // for the surface-gulp sound
 let lastNpcEat = 0; // throttles the others' bites so it never rattles like chewing
@@ -378,6 +451,10 @@ const SPECKLES = [
   [17,-10,1.0],[19,-9,1.1],[19,1,0.9],[15,7,1.0],
 ];
 
+// toothless fish are harmless snacks — the axolotls (you *and* the others)
+// hunt them down. Toothed fish are the ones that bite back.
+const isSnackFish = d => d.type === 'fish' && !d.teeth;
+
 function spawnDanger() {
   const fromLeft = Math.random() < 0.5;
   const x = fromLeft ? -60 : W + 60;
@@ -385,18 +462,22 @@ function spawnDanger() {
   // just fish now — the sharp, hard rocks are gone, so it's a friendlier lake
   // bias toward small fish, so giants feel special
   const r = 18 + Math.pow(Math.random(), 1.6) * 38; // 18 .. 56
-  // small fish dart, big fish lumber
-  const spd = Math.min(2.8, (42/r) * (0.9 + Math.random()*0.5));
+  // big fish are meaner: teeth get likelier the larger the fish
+  const teeth = Math.random() < 0.25 + (r/56) * 0.45;
+  // small fish dart, big fish lumber — snack fish swim a touch slower, so
+  // they're actually catchable
+  let spd = Math.min(2.8, (42/r) * (0.9 + Math.random()*0.5));
+  if (!teeth) spd *= 0.8;
   const c = FISH_COLORS[Math.floor(Math.random()*FISH_COLORS.length)];
   const top = r*1.15 + 30, bot = H - r*0.8 - 20; // keep fin + body on screen
   const y = top + Math.random()*Math.max(20, bot - top);
   dangers.push({
-    x, y, r, type: 'fish', vx: spd * dir,
+    x, y, r, type: 'fish', vx: spd * dir, teeth,
     body: c.body, fin: c.fin, stripe: c.stripe || null,
     wobble: Math.random()*Math.PI*2
   });
 }
-setInterval(spawnDanger, 6000); // one fish at a time, same rate as before
+setInterval(spawnDanger, 4000); // toothless fish are snacks, so keep them coming
 
 function addParticles(x,y,color,n=8) {
   for (let i=0;i<n;i++){
@@ -410,21 +491,31 @@ function update(dt) {
   time += dt;
   // target from input
   let tx = ax.x, ty = ax.y;
-  const arrowPressed = keys.ArrowLeft||keys.ArrowRight||keys.ArrowUp||keys.ArrowDown;
-  if (arrowPressed) {
-    if (keys.ArrowLeft) tx -= 200*dt;
-    if (keys.ArrowRight) tx += 200*dt;
-    if (keys.ArrowUp) ty -= 200*dt;
-    if (keys.ArrowDown) ty += 200*dt;
+  const dirPressed = keys.ArrowLeft||keys.ArrowRight||keys.ArrowUp||keys.ArrowDown||keys.w||keys.a||keys.s||keys.d;
+  // "1" rides up to the air and holds there until you're topped off;
+  // "2" dives for the lake bed — any other input takes back the wheel
+  if (dirPressed) quickMove = null;
+  if (quickMove === 'up' && ax.oxygen >= 100) quickMove = null;
+  if (dirPressed) {
+    if (keys.ArrowLeft  || keys.a) tx -= 200*dt;
+    if (keys.ArrowRight || keys.d) tx += 200*dt;
+    if (keys.ArrowUp    || keys.w) ty -= 200*dt;
+    if (keys.ArrowDown  || keys.s) ty += 200*dt;
+  } else if (quickMove) {
+    // hold a steady course: y-only, easing x back to mid-lake
+    ty = quickMove === 'up' ? 28 : H - 40;
+    tx = ax.x + (W/2 - ax.x) * Math.min(1, dt*0.6);
+    if (quickMove === 'down' && ax.y >= H - 44) quickMove = null; // touched down
   } else if (pointer.active) { tx = pointer.x; ty = pointer.y; }
   // clamp
   tx = Math.max(30, Math.min(W-30, tx));
   ty = Math.max(30, Math.min(H-30, ty));
   ax.tx = tx; ax.ty = ty;
-  // move toward target
+  // move toward target — low oxygen makes you swim sluggish: full tilt at
+  // 100, roughly half speed once you're down to the reserve (20)
   const dx = tx-ax.x, dy=ty-ax.y;
   const dist = Math.hypot(dx,dy);
-  const speed = 180;
+  const speed = 180 * (0.5 + 0.5 * (ax.oxygen/100));
   const px0 = ax.x, py0 = ax.y;
   if (dist>2) {
     const step = Math.min(dist, speed*dt);
@@ -452,13 +543,14 @@ function update(dt) {
     if (ax.swim < 0.5) blowBubbles(ax, 2 + (Math.random()*3|0));
   }
 
-  // oxygen
+  // oxygen — drains slowly now: about 100 seconds from a full bar down to the
+  // reserve, so a trip away from the surface costs a real decision
   if (ax.y < 55) { // surface gulp (air zone)
     if (!inAir) { sGulp(); inAir = true; }
     ax.oxygen = Math.min(100, ax.oxygen + 40*dt);
   } else {
     inAir = false;
-    ax.oxygen = Math.max(0, ax.oxygen - 6*dt);
+    ax.oxygen = Math.max(0, ax.oxygen - 1.0*dt);
   }
   if (ax.oxygen < 20) ax.oxygen = 20; // never critical enough to hurt
 
@@ -499,11 +591,25 @@ function update(dt) {
       ax.flick = 1; // happy little tail flick on every bite
       bite(ax);     // open up for the morsel
       if (ax.eaten % 5 === 0) { twirl(ax, 0.5); blowBubbles(ax, 4); } // extra-happy twirl
-      if (ax.eaten % 10 === 0) {
-        currentFact = facts[Math.floor(Math.random()*facts.length)];
-        factTimer = 5;
-        sFact();
-      }
+      if (ax.eaten % 10 === 0) showFact();
+      return false;
+    }
+    return true;
+  });
+
+  // snack fish: the toothless ones are food — chomp them for score
+  dangers = dangers.filter(d => {
+    if (!isSnackFish(d)) return true;
+    const dist = Math.hypot(d.x-ax.x, d.y-ax.y);
+    if (dist < d.r + 16) {
+      score++;
+      ax.eaten++;
+      addParticles(d.x, d.y, '#FFD700', 14);
+      sEat();
+      ax.flick = 1;
+      bite(ax);
+      if (ax.eaten % 5 === 0) { twirl(ax, 0.5); blowBubbles(ax, 4); }
+      if (ax.eaten % 10 === 0) showFact();
       return false;
     }
     return true;
@@ -514,6 +620,11 @@ function update(dt) {
   for (const f of foods) {
     const d = Math.hypot(f.x-ax.x, f.y-ax.y);
     if (d < nearFoodD) nearFoodD = d;
+  }
+  for (const d of dangers) {           // snack fish count as "food" for the mouth too
+    if (!isSnackFish(d)) continue;
+    const fd = Math.hypot(d.x-ax.x, d.y-ax.y);
+    if (fd < nearFoodD) nearFoodD = fd;
   }
   updateMouth(ax, nearFoodD, dt);
 
@@ -541,9 +652,11 @@ function update(dt) {
   });
   dangers = dangers.filter(d => d.x > -80 && d.x < W+80);
 
-  // collision with danger
+  // collision with danger — only the toothed fish bite back; smooth,
+  // toothless fish are food (handled above) and can never hurt you
   if (ax.invuln <= 0 && ax.regenUntil <= 0) {
     for (const d of dangers) {
+      if (!d.teeth) continue;
       const dist = Math.hypot(d.x-ax.x, d.y-ax.y);
       if (dist < d.r + 18) {
         // lose a limb
@@ -614,11 +727,17 @@ function update(dt) {
         n.mode = 'air'; n.foodRef = null; n.chaseRef = null;
         n.target = { x: Math.max(50, Math.min(W-50, n.x + (Math.random()-0.5)*200)), y: 32 };
       } else {
-        // nearest morsel worth chasing? (only if it's close — otherwise: play!)
+        // nearest morsel worth chasing? (worms, shrimp, insects — and the
+        // toothless fish, which are safe to eat. only if it's close.)
         let best = null, bd = 190;
         for (const f of foods) {
           const d = Math.hypot(f.x-n.x, f.y-n.y);
           if (d < bd) { bd = d; best = f; }
+        }
+        for (const s of dangers) {
+          if (!isSnackFish(s)) continue;
+          const d = Math.hypot(s.x-n.x, s.y-n.y);
+          if (d < bd) { bd = d; best = s; }
         }
         if (best) { n.mode = 'food'; n.foodRef = best; n.chaseRef = null; }
         else if (Math.random() < 0.5) {
@@ -645,9 +764,10 @@ function update(dt) {
         }
       }
     }
-    // keep chasing the morsel we picked (it may drift)
+    // keep chasing the morsel we picked (it may drift, or be eaten)
     if (n.mode === 'food') {
-      if (!n.foodRef || !foods.includes(n.foodRef)) { n.mode = 'wander'; n.foodRef = null; n.think = 0; }
+      const stillFood = n.foodRef && (foods.includes(n.foodRef) || dangers.includes(n.foodRef));
+      if (!stillFood) { n.mode = 'wander'; n.foodRef = null; n.think = 0; }
       else n.target = { x: n.foodRef.x, y: n.foodRef.y };
     }
     // play: stick to a playmate while playing tag, and time the romp out
@@ -692,7 +812,7 @@ function update(dt) {
     n.gillPhase += dt * (3 + n.swim*14 + n.flick*9);
     n.tailPhase += dt * (2.5 + n.swim*16 + n.flick*16);
 
-    // gobble up any food they bump into
+    // gobble up any food they bump into — including the toothless fish
     let nearFoodD = Infinity;
     for (let i = foods.length-1; i >= 0; i--) {
       const f = foods[i];
@@ -708,11 +828,29 @@ function update(dt) {
         if (npcNearPlayer(n) && time - lastNpcEat > 0.45) { lastNpcEat = time; sNpcEat(); }
       }
     }
+    for (let i = dangers.length-1; i >= 0; i--) {
+      const s = dangers[i];
+      if (!isSnackFish(s)) continue;
+      const sd = Math.hypot(s.x-n.x, s.y-n.y);
+      if (sd < nearFoodD) nearFoodD = sd;
+      if (sd < s.r + 12) {
+        dangers.splice(i, 1);
+        n.eaten = (n.eaten||0) + 1;
+        addParticles(s.x, s.y, '#FFD700', 10);
+        bite(n);
+        if (npcNearPlayer(n) && time - lastNpcEat > 0.45) { lastNpcEat = time; sNpcEat(); }
+      }
+    }
     updateMouth(n, nearFoodD, dt);
   });
   // keep the lake stocked (both the player and the others are eating now)
   while (foods.length < 7) spawnFood();
   if (factTimer>0) factTimer -= dt;
+  factClock -= dt;
+  if (factClock <= 0) {
+    showFact();
+    factClock = 120; // every 2 minutes from then on
+  }
 }
 
 function drawAxolotl(a) {
@@ -996,15 +1134,16 @@ function drawFish(d) {
   ctx.fillStyle = '#fff';
   ctx.beginPath(); ctx.arc(ex + er*0.45, ey - er*0.32, er*0.22, 0, Math.PI*2); ctx.fill();
 
-  // mouth, plus teeth on the big ones so they still read as trouble
+  // mouth — toothless fish get a friendly smile; toothed fish show their fangs
   ctx.strokeStyle = 'rgba(0,0,0,0.45)';
   ctx.lineWidth = Math.max(1.5, r*0.05);
   ctx.beginPath();
-  ctx.arc(r*0.9, r*0.2, r*0.2, Math.PI*1.12, Math.PI*1.82);
-  ctx.stroke();
-  if (r > 36) {
+  if (d.teeth) {
+    ctx.arc(r*0.9, r*0.2, r*0.2, Math.PI*1.12, Math.PI*1.82);
+    ctx.stroke();
     ctx.fillStyle = '#fff';
-    for (let i = 0; i < 3; i++) {
+    const nTeeth = Math.max(2, Math.round(r/14));
+    for (let i = 0; i < nTeeth; i++) {
       const tx = r*0.6 + i*r*0.13;
       ctx.beginPath();
       ctx.moveTo(tx, r*0.02);
@@ -1013,6 +1152,10 @@ function drawFish(d) {
       ctx.closePath();
       ctx.fill();
     }
+  } else {
+    // a little upturned grin, so they read as friendly snacks
+    ctx.arc(r*0.82, r*0.16, r*0.22, Math.PI*1.15, Math.PI*1.85);
+    ctx.stroke();
   }
   ctx.restore();
 }
@@ -1227,14 +1370,18 @@ function draw() {
     ctx.textAlign = 'left';
   }
 
-  // fact overlay
+  // fact overlay — shrinks to fit narrow screens
   if (factTimer > 0) {
-    const alpha = Math.min(1, factTimer);
-    ctx.fillStyle = `rgba(0,0,0,${0.6* (factTimer>0.5?1:factTimer*2)})`;
+    const fade = factTimer > 0.5 ? 1 : factTimer*2;
+    ctx.fillStyle = `rgba(0,0,0,${0.6*fade})`;
     ctx.fillRect(0, H/2-60, W, 120);
     ctx.fillStyle = '#FFEB3B';
-    ctx.font = 'bold 26px "Comic Sans MS", Verdana';
     ctx.textAlign='center';
+    let fs = 26;
+    ctx.font = 'bold ' + fs + 'px "Comic Sans MS", Verdana';
+    while (fs > 12 && ctx.measureText(currentFact).width > W - 40) {
+      fs--; ctx.font = 'bold ' + fs + 'px "Comic Sans MS", Verdana';
+    }
     ctx.fillText(currentFact, W/2, H/2);
     ctx.textAlign='left';
   }
@@ -1243,8 +1390,8 @@ function draw() {
   ctx.fillStyle='rgba(0,0,0,0.3)';
   ctx.fillRect(0,H-28,W,28);
   const hintText = W <= 640
-    ? 'Eat food · Surface for air · You regenerate!'
-    : 'Move to eat worms, shrimp & insects. Swim to the top for oxygen. You cannot die - you regenerate!';
+    ? 'Eat toothless fish · Dodge toothed fish · 1 = surface · 2 = dive'
+    : 'Move to eat worms, shrimp, insects — and the friendly toothless fish! Dodge the fish with teeth. Press 1 to surface for air, 2 to dive to the lake bed. You cannot die - you regenerate!';
   ctx.fillStyle='#fff';
   let hs = 14;
   ctx.font = hs+'px Verdana';
