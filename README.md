@@ -1,5 +1,7 @@
 # Louxolotl
 
+🌐 **Live site:** [greg-2600.github.io/Loualotl](https://greg-2600.github.io/Loualotl/) · **Repo:** [github.com/Greg-2600/Loualotl](https://github.com/Greg-2600/Loualotl)
+
 A cute, browser-based axolotl game. Swim around a Mexican canal, hunt for snacks, dodge the nasty fish, and soak up a ton of fun facts about axolotls!
 
 Play it by opening `axolotl_game.html` in any modern web browser — no installation, no build step, no assets needed.
